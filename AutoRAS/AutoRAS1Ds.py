@@ -8,10 +8,11 @@ Provides functions for automating input/output HEC-RAS 1D steady state models
 
 """
 
-import os, parserasgeo as prg
+import os, parserasgeo as prg, rascontrol as rc
 import win32com.client
 import logging
 from zipfile import ZipFile
+import pandas as pd
 
 import qgis
 from qgis.core import *
@@ -225,5 +226,8 @@ def RASExtractWSE(geo_shp_file, profile_list, xs_list):
     layerFields.append(qgis.core.QgsField('River', QVariant.String))
     layerFields.append(qgis.core.QgsField('Reach', QVariant.String))
     Xs_file_writer = qgis.core.QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
-
-
+    
+    cross_sections = [Xs.station for Xs in RAS_geo_obj.get_cross_sections()]    
+    wsels = [rc.get_xs(xs).value(profile, rascontrol.WSEL) for xs in cross_sections]
+    fin_df = pd.DataFrame([cross_sections,wsels])
+    fin_df.to_csv(os.path.join(folder_name,"wse.csv"))
