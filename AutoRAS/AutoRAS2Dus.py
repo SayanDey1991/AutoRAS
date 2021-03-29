@@ -10,7 +10,6 @@ import h5py
 import random
 import numpy as np
 import pandas as pd
-import utils
 import matplotlib.pyplot as plt
 from shapely.geometry import MultiPoint, Point, Polygon, mapping
 import fiona
@@ -19,18 +18,26 @@ from fiona.crs import from_epsg
 
 def get_wse(input_plan_file, input_geometry_file, sample_points, coordinate_system):
     """
-    extracts water surface elevation (wse) data from geometry file based on some sample points within 2D interior area 
+    Extracts water surface elevation (wse) data from geometry file 
+    based on some sample points within 2D interior area. 
     
     Parameters
     ----------
-    input_plan_file : string(filepath of the plan file)
-    input_geometry_file: string(filepath of the geometry file)
-    sample_points: list(coordinate of sample points)
-    coordinate_system: string(from_epsg(...))
+    input_plan_file : str, path object
+        The file must be a plan file in HDF format from the output of a project in Hec-Ras.
+    input_geometry_file: str, path object
+        The file must be a geometry file in HDF format from the output of a project in Hec-Ras.
+    sample_points: list
+        List of coordinates of sample points. The coordinate of each point should be in [x,y] format. 
+        For example, a valid list sample_points parameter would be [[1,1],[2,2]].
+    coordinate_system: int
+        Given an integer code, returns an EPSG-like mapping.
         
     Returns
     -------
-    data/random_points.shp : a csv file with wse data of given points
+    data/random_points.shp : 
+        A comma-separated values (csv) file is returned with time series wse data according to 
+        the input sample points.
     """
     # read plan hdf file 
     f = h5py.File(input_plan_file, 'r')
@@ -70,7 +77,7 @@ def get_wse(input_plan_file, input_geometry_file, sample_points, coordinate_syst
     print(pt_valid)
 
     # Create the random-point shapefile
-    utils.create_shp(pt_valid, 'data/random_points.shp', coordinate_system) #from_epsg(102673)
+    create_shp(pt_valid, 'data/random_points.shp', coordinate_system) #from_epsg(102673)
 
     # Set the parameters for IDW method
     r = 150 # block radius
@@ -82,7 +89,7 @@ def get_wse(input_plan_file, input_geometry_file, sample_points, coordinate_syst
         # predict elevation data
         for i in range(len(wse)):
             z = wse[i]
-            elev.append(utils.idw_rblock(xz,yz,r,p,x,y,z))
+            elev.append(idw_rblock(xz,yz,r,p,x,y,z))
         elev = np.array(elev) # store the predicted data of wse in a list
         # combine the wse data of the point and time date stamp data
         td = np.column_stack((td, elev))
@@ -101,17 +108,25 @@ def idw_rblock(xz,yz,r,p,x,y,z):
     
     Parameters
     ----------
-    xz: x-coordinate of unsampled point
-    yz: y-coordinate of unsampled point
-    r: search radius
-    p: power value of IDW 
-    x: x-coordinate of the sample point
-    y: y-coordinate of the sample point
-    z: z-coordinate of the sample point
+    xz: int or float
+        x-coordinate of unsampled point
+    yz: int or float
+        y-coordinate of unsampled point
+    r: int or float
+        search radius
+    p: int
+        power value of IDW 
+    x: int or float
+        x-coordinate of the sample point
+    y: int or float
+        y-coordinate of the sample point
+    z: int or float
+        z-coordinate of the sample point
         
     Returns
     -------
-    z_idw : estimated z value of the unmeasured point
+    z_idw : int or float
+        Estimated z value of the unmeasured point is returned.
     """
     x_block=[]
     y_block=[]
@@ -149,23 +164,29 @@ def idw_rblock(xz,yz,r,p,x,y,z):
     return z_idw
 
 # function to create shapefile
-def create_shp(coordinate, output_file_name, crs):
+def create_shp(coordinate, output_file_name, coordinate_system):
     """
-    create a point shapefile
+    Create a point shapefile.
     
     Parameters
     ----------
-    coordinate: coordinate of points
-    output_file_name: string(output file name)
-    crs: from_epsg(...) (coordinate system)
+    coordinate: list
+        Coordinates of points in [x,y] format. For example, a valid list 
+        sample_points parameter would be [[1,1],[2,2]].
+    output_file_name: str, path object
+        Any valid string path is acceptable. 
+    coordinate_system: int
+        Given an integer code, returns an EPSG-like mapping.
         
     Returns
     -------
-    point shapefile : shapefile of points
+    point shapefile : shapefile
+        A shapefile with coordinates of input points stored in the attribute table. 
     """
     # write the data into shapefile 
     schema = { 'geometry': 'Point', 'properties': { 'Long': 'float', 'Lat': 'float' } }
-    with collection(output, "w", "ESRI Shapefile", schema, crs) as output:
+    crs = from_epsg(coordinate_system)
+    with collection(output_file_name, "w", "ESRI Shapefile", schema, crs) as output:
         for i in coordinate:
             point = Point(float(i[0]), float(i[1]))
             output.write({'properties': {
@@ -174,3 +195,55 @@ def create_shp(coordinate, output_file_name, crs):
                         },
                         'geometry': mapping(point)
                     })
+
+def Get_velocity(input_plan_file, cell_num):
+    """
+    Extracts face velocity data from plan file based on a list of cell numbers.
+    
+    Parameters
+    ----------
+    input_plan_file : str, path object
+        The file must be a plan file in HDF format from the output of a project in Hec-Ras.
+    cell_num: list 
+        A list of cell numbers.
+        
+    Returns
+    -------
+    data/face_velocity_output.csv : 
+        A comma-separated values (csv) file is returned with time series velocity data according to 
+        the input cell numbers.
+    
+    data/face_velocity_total.csv : 
+        A comma-separated values (csv) file is returned with all time series velocity data.
+    """
+    # read hdf file 
+    f = h5py.File(file_name, 'r')
+    # extract the data of depth
+    v = f['/Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/2D Flow Areas/2D Interior Area/Face Velocity']
+    # extract the data of time date stamp
+    td = f['/Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp']
+    
+    # trsnform data type from bytestring to string
+    td = np.char.decode(td)
+    # combine the depth and time date stamp data
+    ts = np.column_stack((td, v))
+    
+    # save data as pandas dataframe
+    df = pd.DataFrame(ts)
+    # join all the columns in the input list (cell_num)
+    df1 = df[[0]]
+    for n in cell_num:
+        df1 = df1.join(df[n+1])
+    
+    # save data as csv file according to the cell number
+    cell_num.insert(0, 'Time')
+    df1.columns=[str(i) for i in cell_num] # name the column acording to the number of cells
+    df1.rename(columns={ df.columns[0]: "Time" }, inplace = True) # rename the first column as 'Time'
+    df1.to_csv('data/face_velocity_output.csv', index=False)
+    print('The time series data of depth for cell(', cell_num, ')is stored in output.csv file.')
+    
+    # save all data into csv file
+    df.columns=[str(i-1) for i in range(0, len(df.columns))] # name the column acording to the number of cells
+    df.rename(columns={ df.columns[0]: "Time" }, inplace = True) # rename the first column as 'Time'
+    df.to_csv('data/face_velocity_total.csv', index=False)
+    print('The time series data of depth for all cells is stored in depth.csv file.')
