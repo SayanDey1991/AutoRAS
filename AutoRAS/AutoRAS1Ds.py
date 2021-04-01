@@ -21,7 +21,7 @@ from PyQt5.QtCore import *
 
 def RunRASprj(RAS_prj_file):
     """
-    Runs the current plan associated with HEC-RAS .prj file and returns associated geometry file 
+    Runs the current plan associated with HEC-RAS .prj file and returns associated plan and geometry file 
     if run does not throw an error
     
     Parameters
@@ -32,6 +32,8 @@ def RunRASprj(RAS_prj_file):
     Returns
     -------
     geometry file name : String
+    
+    plan file name: String
 
     """
     
@@ -48,49 +50,92 @@ def RunRASprj(RAS_prj_file):
         run_status = hec.Compute_Complete()
         logging.info("Run_status: " + str(run_status))    
         if run_status:
-            return(hec.CurrentGeomFile())
+            return hec.CurrentGeomFile(), hec.CurrentPlanFile()
         else:
             logging.error("Error in running current plan") 
             return("Error")
     finally: 
         hec.QuitRas()
         
+def _unzip_files(input_folder,unzip_filelist):
+    """
+    Parameters
+    ----------
+    folder_name : filepath (string)
+        folder containing the zipped HEC-RAS files
+    unzip_filelist : list
+        list of zipped files processed
+
+    Returns
+    -------
+    ctr : Integer
+        Number of zip files processed in current run
+    unzip_file_list : List
+        list of all zipped files processed 
+
+    """
+    
+    ctr = 0
+    for root, dirs, files in os.walk(input_folder):
+        for name in files:
+            cur_file = os.path.join(root, name)
+            if name.endswith(".zip") and cur_file not in unzip_filelist:
+                try:
+                    with ZipFile(cur_file, 'r') as zip_ref:
+                        zip_ref.extractall(root + "//" + name[:-4])
+                        ctr = ctr+1
+                        unzip_filelist.append(cur_file)
+                except:  
+                    logging.error("Cannot unzip: " + cur_file)
+    return ctr, unzip_filelist
+
 def unzip_all(folder_name, unzip_filelist):
     """
     Unzips all .zip folders in a given folder, including those inside zipped folders    
 
     Parameters
     ----------
-    folder_name : TYPE
-        DESCRIPTION.
-    unzip_filelist : TYPE
-        DESCRIPTION.
+    folder_name : filepath (string)
+        folder containing the zipped HEC-RAS files
+    unzip_filelist : list
+        list of zipped files processed
 
     Returns
     -------
-    ctr : TYPE
-        DESCRIPTION.
-    unzip_filelist : TYPE
-        DESCRIPTION.
+    NONE
 
     """
-    ctr = 0
-    zip_file_ctr, unzip_list = unzip_all(folder_name,unzip_filelist)
+    logging.info("Begin Unzipping")   
+    unzip_list = []   
+    total_zip_file_ctr = 0
+    zip_file_ctr, unzip_list = _unzip_files(folder_name, unzip_list)
+    total_zip_file_ctr = total_zip_file_ctr + zip_file_ctr
     while zip_file_ctr > 0:
-        logging.info("Total file unzipped: " + str(zip_file_ctr))  
-        zip_file_ctr, unzip_list = unzip_all(folder_name,unzip_filelist)
-        for root, dirs, files in os.walk(folder_name):
-            for name in files:
-                cur_file = os.path.join(root, name)
-                if name.endswith(".zip") and cur_file not in unzip_filelist:
-                    try:
-                        with ZipFile(cur_file, 'r') as zip_ref:
-                            zip_ref.extractall(root + "//" + name[:-4])
-                            ctr = ctr+1
-                            unzip_filelist.append(cur_file)
-                    except:  
-                        logging.error("Cannot unzip: " + cur_file)
-        return ctr, unzip_filelist
+        logging.info("New files unzipped: " + str(zip_file_ctr))  
+        zip_file_ctr, unzip_list = _unzip_files(folder_name,unzip_list)
+        
+    logging.info("Unzipping Finished")   
+    logging.info("Total files unzipped: " + total_zip_file_ctr)
+    
+    
+def RASGeo2gdf(RAS_geo_file):
+    """
+    Parameters
+    ----------
+    RAS_geo_file : String (filepath) 
+        filepath to RAS geo file.
+
+    Returns
+    -------
+    fin_XS_gdf : geodataframe
+        geodataframe containing cross-sections with x,y,z
+    fin_CL_gdf : geodataframe
+
+    """   
+    pass
+
+
+
                     
 def RASGeo2Shp(RAS_geo_file, output_folder):
     """
@@ -202,18 +247,17 @@ def RASGeo2Shp(RAS_geo_file, output_folder):
     except:
         logging.error("Error in extracting geometry")
         
-def RASExtractWSE(geo_shp_file, profile_list, xs_list):
+def RASExtractWSE(RAS_prj_file,output_file):
     """
-    
+    extracts wse for all XS for all flows in current plan and writes to csv file
 
     Parameters
     ----------
-    geo_shp_file : TYPE
-        DESCRIPTION.
-    profile_list : TYPE
-        DESCRIPTION.
-    xs_list : TYPE
-        DESCRIPTION.
+    RAS_prj_file : filepath (String)
+        filepath to RAS .prj file.
+    output_file : filepath (String)
+        filepth to a csv file where result to be written 
+        (if file already exists, it will be rewritten).
 
     Returns
     -------
@@ -221,13 +265,29 @@ def RASExtractWSE(geo_shp_file, profile_list, xs_list):
 
     """
     
-    layerFields = qgis.core.QgsFields()
-    layerFields.append(qgis.core.QgsField('Xs_ID', QVariant.Double))
-    layerFields.append(qgis.core.QgsField('River', QVariant.String))
-    layerFields.append(qgis.core.QgsField('Reach', QVariant.String))
-    Xs_file_writer = qgis.core.QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+    # layerFields = qgis.core.QgsFields()
+    # layerFields.append(qgis.core.QgsField('Xs_ID', QVariant.Double))
+    # layerFields.append(qgis.core.QgsField('River', QVariant.String))
+    # layerFields.append(qgis.core.QgsField('Reach', QVariant.String))
+    # Xs_file_writer = qgis.core.QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+    rc.open_project(RAS_prj_file)
     
-    cross_sections = [Xs.station for Xs in RAS_geo_obj.get_cross_sections()]    
-    wsels = [rc.get_xs(xs).value(profile, rascontrol.WSEL) for xs in cross_sections]
-    fin_df = pd.DataFrame([cross_sections,wsels])
-    fin_df.to_csv(os.path.join(folder_name,"wse.csv"))
+    cross_sections = rc.simple_xs_list()
+    profile_list = rc.get_profiles()    
+    wsels = [[rc.get_xs(xs.xs_id,xs.river,xs.reach).value(profile, rascontrol.WSEL)
+              for profile in profile_list]             
+              for xs in cross_sections]
+    
+    #create dataframe 
+    column_list = [profile.name for profile in profile_list]
+    fin_df = pd.DataFrame(wsels, columns=column_list)
+    fin_df["River"] = [xs.river for xs in cross_sections]
+    fin_df["Reach"] = [xs.reach for xs in cross_sections]
+    fin_df["Xs_ID"] = [xs.xs_id for xs in cross_sections]  
+    
+    # write to file 
+    fin_df.to_csv(output_file)
+    
+    
+    
+    
