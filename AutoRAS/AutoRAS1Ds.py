@@ -50,12 +50,44 @@ def RunRASprj(RAS_prj_file):
         run_status = hec.Compute_Complete()
         logging.info("Run_status: " + str(run_status))    
         if run_status:
-            return hec.CurrentGeomFile(), hec.CurrentPlanFile()
+            return([RAS_prj_file, hec.CurrentGeomFile(), hec.CurrentPlanFile()])
         else:
             logging.error("Error in running current plan") 
             return("Error")
     finally: 
         hec.QuitRas()
+        
+def LocateRASprj(input_folder,output_file):
+    """
+    locates HEC-RAS prj files
+
+    Parameters
+    ----------
+    input_folder : filepath (string)
+        folder where all unzipped files are located.
+    output_file: filepath (string) to output csv
+        file which stores list of prj, geo and plan files
+
+    Returns
+    -------
+    None
+
+    """        
+    RAS_file_df = pd.DataFrame(columns=["prj","geo","plan"])
+    for root, dirs, files in os.walk(input_folder):
+        for name in files:
+            if name.endswith(".prj"):
+                logging.info("Processing: " + root)
+                print("Processing: " + root)
+                result = RunRASprj(os.path.join(root, name))
+                if result != "Error":
+                    logging.info("Storing RAS project info")
+                    result_series = pd.Series(result, index = RAS_file_df.columns)
+                    RAS_file_df = RAS_file_df.append(result_series, ignore_index=True) 
+    RAS_file_df.to_csv()
+                    
+                    
+
         
 def _unzip_files(input_folder,unzip_filelist):
     """
@@ -89,7 +121,7 @@ def _unzip_files(input_folder,unzip_filelist):
                     logging.error("Cannot unzip: " + cur_file)
     return ctr, unzip_filelist
 
-def unzip_all(folder_name, unzip_filelist):
+def unzip_all(folder_name):
     """
     Unzips all .zip folders in a given folder, including those inside zipped folders    
 
@@ -97,8 +129,6 @@ def unzip_all(folder_name, unzip_filelist):
     ----------
     folder_name : filepath (string)
         folder containing the zipped HEC-RAS files
-    unzip_filelist : list
-        list of zipped files processed
 
     Returns
     -------
@@ -115,7 +145,7 @@ def unzip_all(folder_name, unzip_filelist):
         zip_file_ctr, unzip_list = _unzip_files(folder_name,unzip_list)
         
     logging.info("Unzipping Finished")   
-    logging.info("Total files unzipped: " + total_zip_file_ctr)
+    logging.info("Total files unzipped: " + str(total_zip_file_ctr))
     
     
 def RASGeo2gdf(RAS_geo_file):
@@ -247,6 +277,26 @@ def RASGeo2Shp(RAS_geo_file, output_folder):
     except:
         logging.error("Error in extracting geometry")
         
+def RASExtractGeo(file_csv, output_folder):
+    """
+    reads a list of geo files from csv file and calls RASGeo2Shp to extarct CL and XS
+    it then calls RASBoundingPoly to create bounding poly
+
+    Parameters
+    ----------
+    file_list : csv file containing column "geo" of geo files
+        
+    output_folder: filepath to folder where all outputs are to be written
+
+    Returns
+    -------
+    None.
+
+    """
+    df = pd.read_csv(file_csv)
+    for geo_file in df["geo"]:
+        RASGeo2Shp(geo_file,output_folder)
+
 def RASExtractWSE(RAS_prj_file,output_file):
     """
     extracts wse for all XS for all flows in current plan and writes to csv file
