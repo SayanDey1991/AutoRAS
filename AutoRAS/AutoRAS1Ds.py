@@ -8,7 +8,7 @@ Provides functions for automating input/output HEC-RAS 1D steady state models
 
 """
 
-import os, parserasgeo as prg, rascontrol as rc
+import os, parserasgeo as prg, rascontrol
 import win32com.client
 import logging
 from zipfile import ZipFile
@@ -17,6 +17,8 @@ import pandas as pd
 import qgis
 from qgis.core import *
 from PyQt5.QtCore import *
+
+RAS_version_string = "507"
 
 
 def RunRASprj(RAS_prj_file):
@@ -37,7 +39,7 @@ def RunRASprj(RAS_prj_file):
 
     """
     
-    hec = win32com.client.Dispatch("RAS507.HECRASController")
+    hec = win32com.client.Dispatch("RAS" + RAS_version_string + ".HECRASController")
     try:
         logging.info("Loading RAS Project")         
         hec.Project_Open(RAS_prj_file) 
@@ -84,7 +86,7 @@ def LocateRASprj(input_folder,output_file):
                     logging.info("Storing RAS project info")
                     result_series = pd.Series(result, index = RAS_file_df.columns)
                     RAS_file_df = RAS_file_df.append(result_series, ignore_index=True) 
-    RAS_file_df.to_csv()
+    RAS_file_df.to_csv(output_file)
                     
                     
 
@@ -164,7 +166,26 @@ def RASGeo2gdf(RAS_geo_file):
     """   
     pass
 
+def RASExtractCRS(RAS_geo_file):
+    """
+    returns the EPSG code of geo file if it exists else return None
+    
+    Parameters
+    ----------
+    RAS_geo_file : file path to RAS geometry file
 
+    Returns
+    -------
+    String : EPSG Code
+    
+    """
+    try:
+        RAS_geo_obj = prg.ParseRASGeo(RAS_geo_file)
+        epsg_code = [item.strip().split('=')[1] for item in RAS_geo_obj.geo_list if type(item)== str if "GIS Projection Zone" in item][0]
+        return epsg_code
+    except:
+        logging.error("Error in extracting CRS of geomtry file")
+        return None    
 
                     
 def RASGeo2Shp(RAS_geo_file, output_folder):
@@ -180,6 +201,7 @@ def RASGeo2Shp(RAS_geo_file, output_folder):
 
     Returns
     -------
+    true if operation was successful else false
     Two shapefiles, one containing centerlines and another containing cross-sections
 
     """
@@ -202,20 +224,20 @@ def RASGeo2Shp(RAS_geo_file, output_folder):
         # LOAD RAS GEOMTERY AND GET CRS
         RAS_geo_obj = prg.ParseRASGeo(RAS_geo_file)
         logging.info("Extracting projection system")
-        epsg_code = [item.strip().split('=')[1] for item in RAS_geo_obj.geo_list if type(item)== str if "GIS Projection Zone" in item][0]
+        epsg_code = RASExtractCRS(RAS_geo_file)
         
         # CREATE SHAPEFILES
         
-        layerFields = qgis.core.QgsFields()
-        layerFields.append(qgis.core.QgsField('Xs_ID', QVariant.Double))
-        layerFields.append(qgis.core.QgsField('River', QVariant.String))
-        layerFields.append(qgis.core.QgsField('Reach', QVariant.String))
-        Xs_file_writer = qgis.core.QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+        layerFields = QgsFields()
+        layerFields.append(QgsField('Xs_ID', QVariant.Double))
+        layerFields.append(QgsField('River', QVariant.String, len=200))
+        layerFields.append(QgsField('Reach', QVariant.String, len=200))
+        Xs_file_writer = QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
         
-        layerFields_CL = qgis.core.QgsFields()
-        layerFields_CL.append(qgis.core.QgsField('River', QVariant.String))
-        layerFields_CL.append(qgis.core.QgsField('Reach', QVariant.String))
-        CL_file_writer = qgis.core.QgsVectorFileWriter(out_file_CL, 'UTF-8', layerFields_CL, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+        layerFields_CL = QgsFields()
+        layerFields_CL.append(QgsField('River', QVariant.String, len=200))
+        layerFields_CL.append(QgsField('Reach', QVariant.String, len=200))
+        CL_file_writer = QgsVectorFileWriter(out_file_CL, 'UTF-8', layerFields_CL, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
             
         # LOAD XS in CREATED SHAPEFILE
         
@@ -274,8 +296,11 @@ def RASGeo2Shp(RAS_geo_file, output_folder):
         del(Xs_file_writer)   
         del(CL_file_writer)
         logging.info("Extraction complete for: " + RAS_geo_file.split("\\")[-1])  
-    except:
-        logging.error("Error in extracting geometry")
+        return True
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        logging.error("Error in extracting geometry:" + exc_tb.tb_lineno)
+        return False
         
 def RASExtractGeo(file_csv, output_folder):
     """
@@ -295,7 +320,74 @@ def RASExtractGeo(file_csv, output_folder):
     """
     df = pd.read_csv(file_csv)
     for geo_file in df["geo"]:
-        RASGeo2Shp(geo_file,output_folder)
+        result1 = RASGeo2Shp(geo_file,output_folder)
+        result2 = RASBoundingPoly_Simple(geo_file,output_folder)
+
+
+def RASBoundingPoly_Simple(RAS_geo_file,output_folder):
+    """
+    Creates a bounding polygon around the XS and saves to shp
+    Works for single stream reaches only
+
+    Returns
+    -------
+    Writes Shapefile containing bounding poly
+    True if successful
+    
+
+    """
+    try:
+        
+        g_filename = os.path.basename(RAS_geo_file).split(".")[0]
+        out_file_BP = os.path.join(output_folder,g_filename + "_BP.shp")
+        ctr=1
+        while(os.path.exists(out_file_BP)):
+            logging.warning("Output BP file already exists: renaming file")
+            out_file_BP = os.path.join(output_folder,g_filename + str(ctr) + "_BP.shp")
+            ctr=ctr+1
+        
+        # LOAD RAS GEOMTERY AND GET CRS
+        RAS_geo_obj = prg.ParseRASGeo(RAS_geo_file)
+        logging.info("Extracting projection system")
+        epsg_code = RASExtractCRS(RAS_geo_file)
+        
+        #get sorted XS list
+        xs_list = [(Xs,Xs.header.station.value) for Xs in RAS_geo_obj.get_cross_sections()]
+        xs_list.sort(key=lambda x: x[1], reverse=True)
+        
+        bp_pts = [QgsPointXY(float(x[0]),float(x[1])) for x in xs_list[0][0].cutline.points] #first xs pts
+        strt_pts = []
+        end_pts = []
+        
+        for tup in xs_list[1:-1]:
+            Xs = tup[0]
+            strt_pts.append(QgsPointXY(float(Xs.cutline.points[0][0]),float(Xs.cutline.points[0][1]))) 
+            end_pts.append(QgsPointXY(float(Xs.cutline.points[-1][0]),float(Xs.cutline.points[-1][1])))
+            
+        bp_pts.extend(end_pts)
+        last_xs_pts = [QgsPointXY(float(x[0]),float(x[1])) for x in xs_list[-1][0].cutline.points]
+        last_xs_pts.reverse()
+        bp_pts.extend(last_xs_pts)
+        strt_pts.reverse()
+        bp_pts.extend(strt_pts)
+        
+        # save polygon in shapefile
+        layerFields = QgsFields()
+        layerFields.append(QgsField('BP_ID', QVariant.Double))
+        
+        Xs_file_writer = QgsVectorFileWriter(out_file_BP, 'UTF-8', layerFields, QgsWkbTypes.Polygon, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+        Xs_feat = QgsFeature()
+        Xs_feat.setGeometry(QgsGeometry.fromPolygonXY([bp_pts]))
+        Xs_feat.setAttributes([0])      # set this later 
+        Xs_file_writer.addFeature(Xs_feat) 
+        del(Xs_file_writer)
+        return True
+    
+    except:
+        logging.error("Error in creating bounding polygon")
+        return False
+        
+    
 
 def RASExtractWSE(RAS_prj_file,output_file):
     """
@@ -320,6 +412,7 @@ def RASExtractWSE(RAS_prj_file,output_file):
     # layerFields.append(qgis.core.QgsField('River', QVariant.String))
     # layerFields.append(qgis.core.QgsField('Reach', QVariant.String))
     # Xs_file_writer = qgis.core.QgsVectorFileWriter(out_file_Xs, 'UTF-8', layerFields, QgsWkbTypes.LineStringZM, QgsCoordinateReferenceSystem('EPSG:' + epsg_code), 'ESRI Shapefile')
+    rc = rascontrol.RasController(version=RAS_version_string)
     rc.open_project(RAS_prj_file)
     
     cross_sections = rc.simple_xs_list()
@@ -337,6 +430,22 @@ def RASExtractWSE(RAS_prj_file,output_file):
     
     # write to file 
     fin_df.to_csv(output_file)
+    
+    # quit ras
+    rc.close()
+    
+# def XS3D2Voronoi(Xs_shp_file):
+#     try:
+#         Xs_lyr = QgsVectorLayer(Xs_shp_file,"" ,"ogr")
+        
+        
+#         return True        
+#     except Exception as e:
+#         exc_type, exc_obj, exc_tb = sys.exc_info()
+#         logging.error("Error in triangulation:" + exc_tb.tb_lineno)
+#         return False
+        
+        
     
     
     
